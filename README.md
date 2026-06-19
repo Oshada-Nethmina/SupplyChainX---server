@@ -82,10 +82,3 @@ dotnet run
 * Analytics Dashboard
 * Docker Support
 
-## Author
-
-**Oshada Nethmina**
-
-* Software Engineering Undergraduate
-* Full Stack Developer
-* Cyber Security Learner
