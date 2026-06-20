@@ -1,6 +1,10 @@
+using System.Security.Cryptography;
+using Microsoft.EntityFrameworkCore;
 using SupplyChainX.Data;
 using SupplyChainX.DTOs.Auth;
+using SupplyChainX.Exceptions;
 using SupplyChainX.Helpers;
+using SupplyChainX.Models;
 using SupplyChainX.Services.Interfaces;
 
 namespace SupplyChainX.Services.Implementations;
@@ -20,28 +24,128 @@ public class AuthService : IAuthService
         _emailService = emailService;
     }
 
-    public Task<AuthResponseDto> RegisterAsync(RegisterRequestDto registerRequest)
+    public async Task<AuthResponseDto> RegisterAsync(RegisterRequestDto registerRequest)
     {
-        throw new NotImplementedException();
+        if (await _supplyChainDbContext.Users.AnyAsync(x => x.Email == registerRequest.Email))
+            throw new AuthException("Email already exists",409);
+
+        var user = new User
+        {
+            FullName = registerRequest.FullName,
+            Email = registerRequest.Email,
+            RoleId = registerRequest.RoleId,
+            IsEmailVerified = false,
+            EmailVerificationToken =
+                Convert.ToBase64String(RandomNumberGenerator.GetBytes(64)),
+            EmailVerificationExpiry = DateTime.UtcNow.AddHours(24)
+        };
+
+        user.PasswordHash = _hashPasswordHelper.HashPassword(user, registerRequest.Password);
+
+        _supplyChainDbContext.Users.Add(user);
+
+        await _supplyChainDbContext.SaveChangesAsync();
+
+        var verificationLink =
+            $"http://localhost:3000/verify-email?token={user.EmailVerificationToken}";
+
+        await _emailService.SendEmailAsync(
+            user.Email,
+            "Verify Email",
+            $"Click <a href='{verificationLink}'>here</a> to verify your email.");
+
+        return new AuthResponseDto
+        {
+            Token = _jwtTokenHelper.GenerateJwtToken(user),
+            ExpiresAt = DateTime.UtcNow.AddHours(2)
+        };
     }
 
-    public Task<AuthResponseDto> LoginAsync(LoginRequestDto loginRequest)
+    public async Task<AuthResponseDto> LoginAsync(LoginRequestDto loginRequest)
     {
-        throw new NotImplementedException();
+        var user = await _supplyChainDbContext.Users
+            .Include(x => x.Role)
+            .FirstOrDefaultAsync(x => x.Email == loginRequest.Email);
+        
+        if (user == null)
+            throw new AuthException("Email or password is incorrect", 401);
+
+        if (!user.IsEmailVerified)
+            throw new AuthException("Email or password is incorrect", 403);
+       
+        bool validPassword = _hashPasswordHelper.VerifyPassword(user, user.PasswordHash, loginRequest.Password);
+        
+        if (!validPassword)
+            throw new AuthException("Password is incorrect", 403);
+
+        return new AuthResponseDto
+        {
+            Token = _jwtTokenHelper.GenerateJwtToken(user),
+            Role = user.Role.Name,
+            ExpiresAt = DateTime.UtcNow.AddHours(2)
+        };
     }
 
-    public Task VerifyEmailAsync(string token)
+    public async Task VerifyEmailAsync(string token)
     {
-        throw new NotImplementedException();
+       var user = await _supplyChainDbContext.Users
+           .FirstOrDefaultAsync(x => x.EmailVerificationToken == token);
+       
+       if (user == null)
+           throw new AuthException("Invalid token", 403);
+
+       if (user.EmailVerificationExpiry < DateTime.UtcNow)
+           throw new AuthException("Token expired", 403);
+     
+       user.IsEmailVerified = true;
+       user.EmailVerificationToken = null;
+       user.EmailVerificationExpiry = null;
+       
+       await _supplyChainDbContext.SaveChangesAsync();
     }
 
-    public Task ForgotPasswordAsync(string email)
+    public async Task ForgotPasswordAsync(string email)
     {
-        throw new NotImplementedException();
+        var user = await _supplyChainDbContext.Users
+            .FirstOrDefaultAsync(x => x.Email == email);
+
+        if (user == null)
+            return;
+
+        user.PasswordResetToken =
+            Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+
+        user.PasswordResetExpiry =
+            DateTime.UtcNow.AddHours(1);
+
+        await _supplyChainDbContext.SaveChangesAsync();
+
+        var resetLink =
+            $"http://localhost:3000/reset-password?token={user.PasswordResetToken}";
+
+        await _emailService.SendEmailAsync(
+            user.Email,
+            "Reset Password",
+            $"Click <a href='{resetLink}'>here</a> to reset your password.");
     }
 
-    public Task ResetPasswordAsync(ResetPasswordRequestDto resetPasswordRequest)
+    public async Task ResetPasswordAsync(ResetPasswordRequestDto resetPasswordRequest)
     {
-        throw new NotImplementedException();
+        var user = await _supplyChainDbContext.Users
+            .FirstOrDefaultAsync(x =>
+                x.PasswordResetToken == resetPasswordRequest.Token);
+        
+        if (user == null)
+            throw new AuthException("Invalid token", 403);
+
+        if (user.PasswordResetExpiry < DateTime.UtcNow)
+            throw new AuthException("Token expired", 403);
+        
+        user.PasswordHash = _hashPasswordHelper.HashPassword(user, resetPasswordRequest.NewPassword);
+        
+        user.PasswordResetToken = null;
+        user.PasswordResetExpiry = null;
+        
+        await _supplyChainDbContext.SaveChangesAsync();
     }
 }
