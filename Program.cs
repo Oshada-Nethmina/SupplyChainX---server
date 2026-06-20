@@ -1,5 +1,7 @@
 using Serilog;
 using SupplyChainX.Data;
+using SupplyChainX.Services.Implementations;
+using SupplyChainX.Services.Interfaces;
 
 
 Log.Logger = new LoggerConfiguration()
@@ -17,6 +19,7 @@ try
     
     builder.Services.AddControllers();
     builder.Services.AddOpenApi();
+    builder.Services.AddScoped<IAuthService, AuthService>();
     
     builder.Services.AddCors(options =>
     {
@@ -37,8 +40,8 @@ try
     app.UseSerilogRequestLogging();
     app.UseHttpsRedirection();
     app.UseCors("AllowFrontend");
-    // app.UseAuthentication();
-    // app.UseAuthorization();
+    app.UseAuthentication();
+    app.UseAuthorization();
 
     app.MapControllers();
 
