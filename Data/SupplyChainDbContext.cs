@@ -9,8 +9,4 @@ public class SupplyChainDbContext : DbContext
 
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<User> Users => Set<User>();
-   
-
-   
-    
 }
